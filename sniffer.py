@@ -1,5 +1,5 @@
 import argparse
-from scapy.all import sniff, TCP, IP, conf
+from scapy.all import sniff, TCP, IP, conf, Raw
 from datetime import datetime
 
 def format_ts(ts):
@@ -16,13 +16,31 @@ def get_tcp_flags(pkt):
     if flags & 0x20: flag_names.append("URG")
     return '+'.join(flag_names) if flag_names else str(flags)
 
-def packet_handler(pkt):
-    if pkt.haslayer(IP) and pkt.haslayer(TCP):
-        ts = format_ts(pkt.time)
-        src = f"{pkt[IP].src}:{pkt[TCP].sport}"
-        dst = f"{pkt[IP].dst}:{pkt[TCP].dport}"
-        flags = get_tcp_flags(pkt)
-        print(f"{ts} TCP {src} -> {dst} Flags: {flags}")
+def packet_handler_tcp(pkt):
+    enable_http = True
+    enable_tls = True
+    if pkt.haslayer(IP) and pkt.haslayer(TCP) and pkt.haslayer(Raw):
+        payload = pkt[Raw].load
+        try:
+            if payload.startswith(b"GET") or payload.startswith(b"POST"):
+                if enable_http:
+                    text = payload.decode(errors="ignore")
+                    ts = format_ts(pkt.time)
+                    src = f"{pkt[IP].src}:{pkt[TCP].sport}"
+                    dst = f"{pkt[IP].dst}:{pkt[TCP].dport}"
+                    method = text.split()[0]
+                    uri = text.split()[1]
+                    print(f"{ts} HTTP {src} -> {dst} {method} {uri}")
+            elif payload[0] == 0x16 and payload[5] == 0x01:
+                if enable_tls:
+                    ts = format_ts(pkt.time)
+                    src = f"{pkt[IP].src}:{pkt[TCP].sport}"
+                    dst = f"{pkt[IP].dst}:{pkt[TCP].dport}"
+                    print(f"{ts} TLS {src} -> {dst} Client Hello")
+        except Exception:
+            print("Error decoding payload")
+            pass
+        
 
 def main():
     parser = argparse.ArgumentParser()
@@ -31,7 +49,7 @@ def main():
 
     iface = args.interface or conf.iface
     print(f"[*] Sniffing on interface: {iface}")
-    sniff(iface=iface, prn=packet_handler, filter="tcp", store=0)
+    sniff(iface=iface, prn=packet_handler_tcp, filter="tcp", store=0)
 
 if __name__ == "__main__":
     main()
